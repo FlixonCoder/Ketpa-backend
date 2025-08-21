@@ -9,7 +9,7 @@ import userRouter from './routes/userRoutes.js';
 
 // app config
 const app = express()
-const port = process.env.PORT || 4000
+const port = process.env.PORT
 connectDB()
 connectCloudinary()
 
@@ -23,7 +23,7 @@ app.use('/api/doctor',doctorRouter)
 app.use('/api/user',userRouter)
 
 app.get('/',(req,res)=>{
-    res.send('API working get')
+    res.send('API working great')
 })
 
-app.listen(port, ()=> console.log("Server Started", port))
+app.listen(port, ()=> console.log("Server Started"))
