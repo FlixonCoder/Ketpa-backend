@@ -9,7 +9,7 @@ import { v2 as cloudinary } from "cloudinary";
 import userModel from "../models/userModel.js";
 import doctorModel from "../models/doctorModel.js";
 import appointmentModel from "../models/appointmentModel.js";
-import sendMail from "./mailer.js";
+import sendMail, { sendVerificationEmail} from "./mailer.js";
 
 // ==============================
 // 📌 Utility Functions
@@ -81,21 +81,55 @@ const registerUser = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Save User
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit
+    const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+
     const newUser = new userModel({
       name,
       email,
       phone,
       pet,
       password: hashedPassword,
+      otp,
+      otpExpiry: expiry,
     });
 
-    const user = await newUser.save();
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+    await newUser.save();
 
-    res.json({ success: true, token, message: "Account creation success." });
+    await sendVerificationEmail(email, otp);
+
+    res.json({
+      success: true,
+      message: "Account created. Please verify your email using the OTP sent.",
+    });
   } catch (error) {
-    console.error(error);
+    res.json({ success: false, message: error.message });
+  }
+};
+
+const verifyOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const user = await userModel.findOne({ email });
+
+    if (!user) return res.json({ success: false, message: "User not found" });
+
+    if (user.isVerified) {
+      return res.json({ success: true, message: "Email already verified" });
+    }
+
+    if (user.otp !== otp || user.otpExpiry < new Date()) {
+      return res.json({ success: false, message: "Invalid or expired OTP" });
+    }
+
+    user.isVerified = true;
+    user.otp = undefined;
+    user.otpExpiry = undefined;
+    await user.save();
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET);
+    res.json({ success: true, token, message: "Email verified successfully" });
+  } catch (error) {
     res.json({ success: false, message: error.message });
   }
 };
@@ -168,6 +202,36 @@ const updateProfile = async (req, res) => {
   }
 };
 
+// resend OTP
+const resendOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.json({ success: false, message: "Email is required" });
+    }
+
+    const user = await userModel.findOne({ email });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    user.otp = otp;
+    user.otpExpiry = expiry;
+    await user.save();
+
+    await sendVerificationEmail(email, otp);
+
+    res.json({ success: true, message: "OTP resent successfully" });
+  } catch (error) {
+    console.error(error);
+    res.json({ success: false, message: error.message });
+  }
+};
+
+
 // ==============================
 // 📌 Appointment APIs
 // ==============================
@@ -179,6 +243,10 @@ const bookAppointment = async (req, res) => {
 
     const docData = await doctorModel.findById(docId).select("-password");
     const userData = await userModel.findById(userId).select("-password");
+
+    if (!userData.isVerified) {
+      return res.json({success:false,message:"Verify your email to book appointments."})
+    }
 
     if (!docData.available) {
       return res.json({ success: false, message: "Doctor not available" });
@@ -310,4 +378,6 @@ export {
   bookAppointment,
   listAppointment,
   cancelAppointment,
+  verifyOtp,
+  resendOtp,
 };
